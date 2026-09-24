@@ -49,12 +49,16 @@ async def send_telegram_photo_with_caption(caption: str, photo_bytes: bytes, cha
         await client.post(url, data=data, files=files)
 
 async def ask_gemini(prompt: str) -> str:
-    """استدعاء مضمون ومحدث لأسماء نماذج Gemini المعتمدة رسمياً"""
+    """استدعاء محدث لأسماء نماذج Gemini المعالجة الحديثة"""
     if not GEMINI_API_KEY:
         return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات بيئة Render."
     
-    # أسماء النماذج الرسمية المعرفية في المكتبة
-    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro']
+    # النماذج الحديثة الموصى بها من Google
+    models_to_try = [
+        'gemini-3.6-flash',
+        'gemini-3.1-pro-preview',
+        'gemini-1.5-flash'
+    ]
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY.strip())
@@ -175,7 +179,7 @@ async def lifespan(app: FastAPI):
     async with httpx.AsyncClient() as client:
         await client.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={webhook_url}")
     
-    task = asyncio.task = asyncio.create_task(check_market_signals())
+    task = asyncio.create_task(check_market_signals())
     yield
     task.cancel()
 
