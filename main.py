@@ -49,23 +49,27 @@ async def send_telegram_photo_with_caption(caption: str, photo_bytes: bytes, cha
         await client.post(url, data=data, files=files)
 
 async def ask_gemini(prompt: str) -> str:
-    """استدعاء مضمون وبسيط باستخدام المكتبة الرسمية لـ Gemini"""
+    """استدعاء محدث لـ Gemini باستخدام النموذج الجديد gemini-3.6-flash"""
     if not GEMINI_API_KEY:
-        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات بيئة Render."
+        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات البيئة."
     
-    try:
-        # إنشاء العميل باستخدام المكتبة الرسمية لـ Gemini
-        client = genai.Client(api_key=GEMINI_API_KEY.strip())
-        
-        # استدعاء نموذج gemini-2.0-flash المعتمد والمجاني
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt,
-        )
-        return response.text
-    except Exception as e:
-        print(f"خطأ Gemini: {e}")
-        return f"⚠️ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي:\n`{e}`"
+    # قائمة النماذج المحدثة وفق توصيات جوجل
+    models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    client = genai.Client(api_key=GEMINI_API_KEY.strip())
+    
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            print(f"فشل النموذج {model_name}: {e}")
+            continue
+
+    return "⚠️ تعذر الاتصال بنموذج الذكاء الاصطناعي حالياً."
 
 def get_stock_data_summary(symbol: str) -> str:
     """جلب ملخص فني سريع لسهم محدد"""
