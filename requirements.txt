@@ -3,3 +3,5 @@ uvicorn
 httpx
 yfinance
 pandas_ta
+matplotlib
+mplfinance
