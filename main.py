@@ -3,20 +3,18 @@ import asyncio
 import httpx
 import yfinance as yf
 import pandas_ta as ta
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 TELEGRAM_BOT_TOKEN = "8736155366:AAGy8375LQ-myDoXi6BAmN-xtr1jSs5rFlA"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"  # أرسل أي رسالة للبوت وسيأخذ الـ Chat ID تلقائياً، أو سنحدده تلقائياً
 
-# قائمة الأسهم المراد متابعتها
-SYMBOLS = ["SST", "NVDA", "AAPL"]
+# قائمة الأسهم المطلوبة للمتابعة الدورية
+SYMBOLS = ["SST", "MTEN", "CPSH", "MVIS", "WGS", "NVDA", "AAPL"]
 
 async def send_telegram_message(message: str, chat_id: str = None):
     """إرسال رسالة إلى التليجرام"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # إذا لم يحدد chat_id، نسحب آخر chat_id تفاعل مع البوت
     if not chat_id:
         try:
             async with httpx.AsyncClient() as client:
@@ -41,16 +39,14 @@ async def send_telegram_message(message: str, chat_id: str = None):
         await client.post(url, json=payload)
 
 async def check_market_signals():
-    """مهمة تعمل في الخلفية لفحص الأسهم بشكل دوري"""
+    """مهمة تعمل في الخلفية لفحص قائمة الأسهم بشكل دوري"""
     while True:
         try:
             for symbol in SYMBOLS:
-                # سحب بيانات السهم (آخر يومين بفريم 5 دقائق)
                 ticker = yf.Ticker(symbol)
                 df = ticker.history(period="2d", interval="5m")
                 
                 if not df.empty and len(df) > 14:
-                    # حساب مؤشر RSI
                     df['RSI'] = ta.rsi(df['Close'], length=14)
                     
                     latest_price = round(df['Close'].iloc[-1], 2)
@@ -62,7 +58,6 @@ async def check_market_signals():
                     elif latest_rsi > 70:
                         signal = "🔴 فرصة بيع (SELL) - تشبع شرائي!"
                     
-                    # إذا تحققت إشارة، يتم إرسال التنبيه فوراً
                     if signal:
                         msg = (
                             f"📊 **تنبيه آلي مستقل**\n\n"
@@ -77,12 +72,11 @@ async def check_market_signals():
         except Exception as e:
             print(f"خطأ أثناء فحص السوق: {e}")
             
-        # الانتظار 300 ثانية (5 دقائق) قبل الفحص القادم
+        # فحص كل 5 دقائق
         await asyncio.sleep(300)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # تشغيل الفحص الدوري عند بدء السيرفر
     task = asyncio.create_task(check_market_signals())
     yield
     task.cancel()
@@ -95,14 +89,13 @@ def home():
 
 @app.post("/webhook")
 async def webhook(data: dict):
-    # إمكانية استقبال أي تنبيه خارجي أيضاً
     ticker = data.get("ticker", "N/A")
     price = data.get("price", "N/A")
     rsi = data.get("rsi", "N/A")
     action = data.get("action", "BUY")
     
     msg = (
-        f"🚨 **تنبيه خاص** 🚨\n\n"
+        f"🚨 **تنبيه خارجي** 🚨\n\n"
         f"📌 **السهم:** `{ticker}`\n"
         f"💰 **السعر:** `${price}`\n"
         f"📊 **RSI:** `{rsi}`\n"
