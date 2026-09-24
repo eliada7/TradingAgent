@@ -11,9 +11,11 @@ import mplfinance as mpf
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 
+# بيانات التليجرام والمفاتيح
 TELEGRAM_BOT_TOKEN = "8736155366:AAGy8375LQ-myDoXi6BAmN-xtr1jSs5rFlA"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
+# قائمة الأسهم المتابعة
 SYMBOLS = ["SST", "MTEN", "CPSH", "MVIS", "WGS", "NVDA", "AAPL"]
 
 async def send_telegram_message(text: str, chat_id: str):
@@ -46,21 +48,29 @@ async def send_telegram_photo_with_caption(caption: str, photo_bytes: bytes, cha
         await client.post(url, data=data, files=files)
 
 async def ask_gemini(prompt: str) -> str:
-    """استدعاء نموذج Gemini AI للإجابة التفاعلية"""
+    """استدعاء ذكي لـ Gemini API يتنقل بين النماذج تلقائياً لتفادي أي أخطاء"""
     if not GEMINI_API_KEY:
-        return "⚠️ مفتاح `GEMINI_API_KEY` غير مفعّل في السيرفر. يرجى إضافته لاستخدام الذكاء الاصطناعي."
+        return "⚠️ مفتاح `GEMINI_API_KEY` غير مفعّل في السيرفر."
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    clean_key = GEMINI_API_KEY.strip()
+    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            response = await client.post(url, json=payload)
-            result = response.json()
-            return result['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        print(f"خطأ في Gemini: {e}")
-        return "عذراً، حدث خطأ أثناء معالجة الطلب عبر الذكاء الاصطناعي."
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+            try:
+                response = await client.post(url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    result = response.json()
+                    return result['candidates'][0]['content']['parts'][0]['text']
+                else:
+                    print(f"نموذج {model} أرجع رمز الاستجابة: {response.status_code}")
+            except Exception as e:
+                print(f"خطأ أثناء الاتصال بـ {model}: {e}")
+                
+    return "عذراً، تعذر معالجة الطلب عبر الذكاء الاصطناعي حالياً. يرجى التأكد من صلاحية المفتاح أو المحاولة لاحقاً."
 
 def get_stock_data_summary(symbol: str) -> str:
     """جلب ملخص فني سريع لأي سهم يطلبه المستخدم"""
@@ -79,7 +89,7 @@ def get_stock_data_summary(symbol: str) -> str:
         return f"خطأ في قراءة بيانات السهم: {e}"
 
 def generate_chart_image(df, symbol):
-    """رسم الشارت بالشموع اليابانية"""
+    """رسم الشارت بالشموع اليابانية مع المتوسطات والمؤشرات"""
     df_chart = df.tail(40).copy()
     plots = [
         mpf.make_addplot(df_chart['EMA_20'], color='blue', width=1),
@@ -99,7 +109,7 @@ def generate_chart_image(df, symbol):
     return buf.getvalue()
 
 async def check_market_signals():
-    """مهمة الخلفية الدورية"""
+    """مهمة الخلفية الدورية لمراقبة السوق"""
     while True:
         try:
             for symbol in SYMBOLS:
@@ -156,7 +166,7 @@ async def check_market_signals():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # إعداد الـ Webhook الخاص بالتليجرام لتلقي المحادثات التفاعلية
+    # ربط التليجرام بالـ Webhook الخاص بالسيرفر
     webhook_url = "https://eliada-trading-agent.onrender.com/telegram-webhook"
     async with httpx.AsyncClient() as client:
         await client.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={webhook_url}")
@@ -173,14 +183,14 @@ def home():
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    """استقبال رسائل المستخدم من تليجرام والرد عليها تفاعلياً"""
+    """استقبال رسائل المستخدم من تليجرام والرد عليها تفاعلياً عبر الذكاء الاصطناعي"""
     try:
         data = await request.json()
         if "message" in data and "text" in data["message"]:
             chat_id = str(data["message"]["chat"]["id"])
             user_text = data["message"]["text"].strip()
             
-            # في حال طلب المستخدم تحليل سهم معين بالرمز
+            # فحص إذا كانت الرسالة تحتوي على رمز سهم معين
             words = user_text.upper().split()
             found_symbol = None
             for w in words:
@@ -197,7 +207,7 @@ async def telegram_webhook(request: Request):
                 
                 سؤال المستخدم الأصلي: "{user_text}"
                 
-                المطلوب: اجب بشكل خبير مالي واشرح الوضع الفني بأسلوب مبسط ومشجع باللغة العربية.
+                المطلوب: أجب بشكل خبير مالي واشرح الوضع الفني بأسلوب مبسط ومشجع باللغة العربية.
                 """
                 reply = await ask_gemini(prompt)
             else:
