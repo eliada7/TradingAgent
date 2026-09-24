@@ -49,14 +49,19 @@ async def send_telegram_photo_with_caption(caption: str, photo_bytes: bytes, cha
         await client.post(url, data=data, files=files)
 
 async def ask_gemini(prompt: str) -> str:
-    """استدعاء محدث لـ Gemini باستخدام النموذج الجديد gemini-3.6-flash"""
+    """استدعاء مضمون ومحدث لأسماء نماذج Gemini المعتمدة رسمياً"""
     if not GEMINI_API_KEY:
-        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات البيئة."
+        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات بيئة Render."
     
-    # قائمة النماذج المحدثة وفق توصيات جوجل
-    models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
-    client = genai.Client(api_key=GEMINI_API_KEY.strip())
+    # أسماء النماذج الرسمية المعرفية في المكتبة
+    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro']
     
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY.strip())
+    except Exception as init_err:
+        return f"⚠️ خطأ في إعداد عميل Gemini: `{init_err}`"
+
+    last_error = ""
     for model_name in models_to_try:
         try:
             response = client.models.generate_content(
@@ -66,10 +71,11 @@ async def ask_gemini(prompt: str) -> str:
             if response and response.text:
                 return response.text
         except Exception as e:
+            last_error = str(e)
             print(f"فشل النموذج {model_name}: {e}")
             continue
 
-    return "⚠️ تعذر الاتصال بنموذج الذكاء الاصطناعي حالياً."
+    return f"⚠️ تعذر الاتصال بنماذج الذكاء الاصطناعي.\nالسبب: `{last_error}`"
 
 def get_stock_data_summary(symbol: str) -> str:
     """جلب ملخص فني سريع لسهم محدد"""
@@ -169,7 +175,7 @@ async def lifespan(app: FastAPI):
     async with httpx.AsyncClient() as client:
         await client.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={webhook_url}")
     
-    task = asyncio.create_task(check_market_signals())
+    task = asyncio.task = asyncio.create_task(check_market_signals())
     yield
     task.cancel()
 
