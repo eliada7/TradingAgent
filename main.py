@@ -1,63 +1,112 @@
-import requests
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+import os
+import asyncio
+import httpx
+import yfinance as yf
+import pandas_ta as ta
+from fastapi import FastAPI, BackgroundTasks
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="TradingView AI Agent")
-
-# --- ضع التوكين والـ ID الخاط بيك هنا لاحقاً ---
 TELEGRAM_BOT_TOKEN = "8736155366:AAGy8375LQ-myDoXi6BAmN-xtr1jSs5rFlA"
-TELEGRAM_CHAT_ID = "5156868751"
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"  # أرسل أي رسالة للبوت وسيأخذ الـ Chat ID تلقائياً، أو سنحدده تلقائياً
 
-class SignalData(BaseModel):
-    ticker: str
-    price: float
-    rsi: float
-    timeframe: str
-    action: str
+# قائمة الأسهم المراد متابعتها
+SYMBOLS = ["SST", "NVDA", "AAPL"]
 
-def send_telegram_message(message: str):
+async def send_telegram_message(message: str, chat_id: str = None):
+    """إرسال رسالة إلى التليجرام"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    # إذا لم يحدد chat_id، نسحب آخر chat_id تفاعل مع البوت
+    if not chat_id:
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates")
+                updates = res.json()
+                if updates.get("result"):
+                    chat_id = updates["result"][-1]["message"]["chat"]["id"]
+                else:
+                    print("لم يتم العثور على Chat ID، يرجى إرسال أي رسالة للبوت أولاً.")
+                    return
+        except Exception as e:
+            print(f"خطأ في جلب Chat ID: {e}")
+            return
+
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": message,
         "parse_mode": "Markdown"
     }
-    response = requests.post(url, json=payload)
-    return response.status_code == 200
+    
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
 
-def analyze_signal(data: SignalData) -> str:
-    if data.rsi < 30:
-        analysis = "🟢 تشبع بيعي شديد (فرصة ارتداد صعودي)"
-    elif data.rsi > 70:
-        analysis = "🔴 تشبع شرائي شديد (احتمال جني أرباح/تصحيح)"
-    else:
-        analysis = "🟡 حركة متوازنة ضمن النطاق الطبيعي"
+async def check_market_signals():
+    """مهمة تعمل في الخلفية لفحص الأسهم بشكل دوري"""
+    while True:
+        try:
+            for symbol in SYMBOLS:
+                # سحب بيانات السهم (آخر يومين بفريم 5 دقائق)
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period="2d", interval="5m")
+                
+                if not df.empty and len(df) > 14:
+                    # حساب مؤشر RSI
+                    df['RSI'] = ta.rsi(df['Close'], length=14)
+                    
+                    latest_price = round(df['Close'].iloc[-1], 2)
+                    latest_rsi = round(df['RSI'].iloc[-1], 2)
+                    
+                    signal = None
+                    if latest_rsi < 35:
+                        signal = "🟢 فرصة شراء (BUY) - تشبع بيعي!"
+                    elif latest_rsi > 70:
+                        signal = "🔴 فرصة بيع (SELL) - تشبع شرائي!"
+                    
+                    # إذا تحققت إشارة، يتم إرسال التنبيه فوراً
+                    if signal:
+                        msg = (
+                            f"📊 **تنبيه آلي مستقل**\n\n"
+                            f"🔹 **السهم:** `{symbol}`\n"
+                            f"💵 **السعر الحالي:** `${latest_price}`\n"
+                            f"📈 **مؤشر RSI:** `{latest_rsi}`\n"
+                            f"🎯 **الإشارة:** {signal}\n\n"
+                            f"⚡ _تم الفحص تلقائياً من سيرفرك الخاص._"
+                        )
+                        await send_telegram_message(msg)
+                        
+        except Exception as e:
+            print(f"خطأ أثناء فحص السوق: {e}")
+            
+        # الانتظار 300 ثانية (5 دقائق) قبل الفحص القادم
+        await asyncio.sleep(300)
 
-    report = (
-        f"🚨 **تنبيه جديد من TradingView** 🚨\n\n"
-        f"📌 **السهم:** `{data.ticker}`\n"
-        f"⏱️ **الإطار الزمني:** {data.timeframe}\n"
-        f"💰 **السعر الحالي:** ${data.price}\n"
-        f"📊 **مؤشر RSI:** {data.rsi}\n"
-        f"⚡ **الإجراء التلقائي:** `{data.action}`\n\n"
-        f"🧠 **تحليل الـ Agent:**\n{analysis}\n"
-    )
-    return report
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # تشغيل الفحص الدوري عند بدء السيرفر
+    task = asyncio.create_task(check_market_signals())
+    yield
+    task.cancel()
 
-@app.post("/webhook")
-async def handle_tradingview_webhook(request: Request):
-    try:
-        json_data = await request.json()
-        data = SignalData(**json_data)
-        report = analyze_signal(data)
-        success = send_telegram_message(report)
-        if success:
-            return {"status": "success", "message": "Signal processed and sent to Telegram"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send Telegram message")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def home():
-    return {"message": "TradingView AI Agent is running!"}
+    return {"status": "Trading Agent is running successfully 24/7!"}
+
+@app.post("/webhook")
+async def webhook(data: dict):
+    # إمكانية استقبال أي تنبيه خارجي أيضاً
+    ticker = data.get("ticker", "N/A")
+    price = data.get("price", "N/A")
+    rsi = data.get("rsi", "N/A")
+    action = data.get("action", "BUY")
+    
+    msg = (
+        f"🚨 **تنبيه خاص** 🚨\n\n"
+        f"📌 **السهم:** `{ticker}`\n"
+        f"💰 **السعر:** `${price}`\n"
+        f"📊 **RSI:** `{rsi}`\n"
+        f"🎬 **الإجراء:** `{action}`"
+    )
+    await send_telegram_message(msg)
+    return {"status": "success"}
