@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
+from google import genai
 
 # بيانات التليجرام والمفاتيح
 TELEGRAM_BOT_TOKEN = "8736155366:AAGy8375LQ-myDoXi6BAmN-xtr1jSs5rFlA"
@@ -48,32 +49,23 @@ async def send_telegram_photo_with_caption(caption: str, photo_bytes: bytes, cha
         await client.post(url, data=data, files=files)
 
 async def ask_gemini(prompt: str) -> str:
-    """استدعاء محدث ومتوافق مع صيغ المفاتيح الجديدة لـ Gemini"""
+    """استدعاء مضمون وبسيط باستخدام المكتبة الرسمية لـ Gemini"""
     if not GEMINI_API_KEY:
-        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات البيئة."
+        return "⚠️ مفتاح `GEMINI_API_KEY` غير متوفر في متغيرات بيئة Render."
     
-    clean_key = GEMINI_API_KEY.strip()
-    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
-    
-    # دعم التمرير عبر Header و Query String لتغطية كافة أنواع المفاتيح
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": clean_key
-    }
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        for model in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
-            try:
-                response = await client.post(url, json=payload, headers=headers)
-                if response.status_code == 200:
-                    result = response.json()
-                    return result['candidates'][0]['content']['parts'][0]['text']
-            except Exception as e:
-                print(f"خطأ الاتصال بالنموذج {model}: {e}")
-                
-    return "عذراً، تعذر الاتصال بخدمة التحليل الذكي حالياً."
+    try:
+        # إنشاء العميل باستخدام المكتبة الرسمية لـ Gemini
+        client = genai.Client(api_key=GEMINI_API_KEY.strip())
+        
+        # استدعاء نموذج gemini-2.0-flash المعتمد والمجاني
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        print(f"خطأ Gemini: {e}")
+        return f"⚠️ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي:\n`{e}`"
 
 def get_stock_data_summary(symbol: str) -> str:
     """جلب ملخص فني سريع لسهم محدد"""
@@ -112,7 +104,7 @@ def generate_chart_image(df, symbol):
     return buf.getvalue()
 
 async def check_market_signals():
-    """مهمة المراقبة الدورية"""
+    """مهمة المراقبة الدورية للأسهم كل 5 دقائق"""
     while True:
         try:
             for symbol in SYMBOLS:
@@ -185,6 +177,7 @@ def home():
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
+    """استقبال رسائل التليجرام والرد عليها"""
     try:
         data = await request.json()
         if "message" in data and "text" in data["message"]:
