@@ -5,3 +5,4 @@ yfinance
 pandas_ta
 matplotlib
 mplfinance
+google-genai
